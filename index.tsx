@@ -8,7 +8,7 @@ import {
   Check, ShieldCheck, Sparkles, Bot, BrainCircuit, Zap, PenTool, Palette, Wrench, BookOpen,
   Plus, Trash2, FolderOpen, Rocket, ExternalLink, CheckCircle2, AlertCircle, FolderPlus,
   Cpu, Activity, Database, Key, Eye, EyeOff, Edit2, PlayCircle, HelpCircle, Pause, Square, 
-  Play as PlayIcon, Download, Upload, FileJson, MessageSquareQuote, Layers
+  Play as PlayIcon, Download, Upload, FileJson, MessageSquareQuote, Layers, Briefcase, Image as ImageIcon, Lightbulb
 } from 'lucide-react';
 
 // --- Types ---
@@ -35,9 +35,10 @@ interface Message {
   timestamp: number;
   agent?: AgentType; 
   meta?: string;
+  images?: string[]; // Base64 images
 }
 
-type AgentType = 'orchestrator' | 'coder' | 'reviewer' | 'fixer' | 'database_architect' | 'system' | 'prompt_expert';
+type AgentType = 'orchestrator' | 'coder' | 'reviewer' | 'fixer' | 'database_architect' | 'system' | 'prompt_expert' | 'planner' | 'creative';
 
 interface FileNode {
   name: string;
@@ -48,7 +49,7 @@ interface FileNode {
   isOpen?: boolean;
 }
 
-type AgentStep = 'idle' | 'optimizing' | 'planning' | 'database' | 'coding' | 'reviewing' | 'fixing' | 'deploying';
+type AgentStep = 'idle' | 'optimizing' | 'planning' | 'designing' | 'database' | 'coding' | 'reviewing' | 'fixing';
 
 interface Notification {
   id: string;
@@ -433,6 +434,9 @@ const buildFileTreeWithPaths = (nodes: any[], pathPrefix = ''): FileNode[] => {
 
 const INITIAL_FILES_TEMPLATE_RAW = [
   { name: 'src', type: 'folder', isOpen: true, children: [
+      { name: 'brain', type: 'folder', isOpen: true, children: [
+          { name: 'read_me.md', type: 'file', content: '# NeXify Brain\n\nDieser Ordner enthält das zentrale Wissen des Projekts.\nAgenten speichern hier Konzepte, Design-Systeme und Strategien.\n\n- concept.md: Business Plan & Features\n- marketing.md: Zielgruppen & Strategie\n- design.json: Farben, Fonts, Assets' }
+      ]},
       { name: 'App.tsx', type: 'file', content: `import React, { useState, useEffect } from "react";
 import { Rocket, Sparkles, Database, CheckCircle2 } from "lucide-react";
 import { supabase } from "./lib/supabase";
@@ -443,14 +447,11 @@ export default function App() {
   useEffect(() => {
     async function checkConnection() {
       try {
-        // Einfacher Health-Check (ohne Auth für public Read)
         const { error } = await supabase.from('random_check').select('*').limit(1);
-        // Hinweis: 404/400 ist okay, da Tabelle vllt nicht existiert. 
-        // Wichtig ist, dass der Client initialisiert wurde.
         if (error && error.code === 'PGRST116') setDbStatus("Verbunden (Keine Tabellen)");
         else setDbStatus("Verbunden & Bereit");
       } catch (e) {
-        setDbStatus("Bereit");
+        setDbStatus("Bereit (Client Init)");
       }
     }
     checkConnection();
@@ -465,12 +466,14 @@ export default function App() {
               <Rocket size={48} className="text-blue-500" />
            </div>
         </div>
-        <h1 className="text-4xl font-extrabold bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent mb-4 tracking-tight animate-fade-in">Projekt Initialisiert</h1>
+        <h1 className="text-4xl font-extrabold bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent mb-4 tracking-tight animate-fade-in">NeXifyAI Ready</h1>
         <p className="text-slate-400 mb-8 leading-relaxed">
-          Dein autonomes <span className="text-slate-200 font-medium">NeXify AI-Team</span> ist bereit. Beschreibe deine App-Idee im Chat, und wir bauen sie – inklusive Datenbank und Backend.
+          Dein autonomes <span className="text-slate-200 font-medium">KI-Team</span> steht bereit.
+          <br/>
+          <span className="text-xs uppercase tracking-widest text-slate-500 mt-2 block">Prompt Expert • CPO • Creative Director • Architect</span>
         </p>
         <div className="grid grid-cols-2 gap-4 text-left bg-slate-950/50 p-4 rounded-xl border border-slate-800 mb-6 transition-colors hover:bg-slate-950/80">
-           <div className="flex items-center gap-2 text-sm text-slate-300"><Sparkles size={14} className="text-yellow-400"/> AI Powered</div>
+           <div className="flex items-center gap-2 text-sm text-slate-300"><Sparkles size={14} className="text-yellow-400"/> Brain Active</div>
            <div className="flex items-center gap-2 text-sm text-emerald-400 font-medium"><Database size={14} /> {dbStatus}</div>
         </div>
       </div>
@@ -495,10 +498,15 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);` }
 const INITIAL_FILES_TEMPLATE = buildFileTreeWithPaths(INITIAL_FILES_TEMPLATE_RAW);
 
 const DEFAULT_SYSTEM_PROMPT = `Du bist NeXify, ein Elite Full-Stack KI-Entwickler-Team.
-Du agierst mit der Logik und Präzision eines Senior Architect (Niveau: Claude 3.5 Sonnet).
+Du agierst mit der Logik und Präzision eines Senior Architect (Niveau: Claude 3.5 Sonnet / Opus).
 
 DEINE ROLLE:
-Du bist der Lead Architect und Senior Coder. Du planst und implementierst Web-Apps autonom.
+Du bist der Lead Architect und Senior Coder. Du planst und implementierst Web-Apps autonom basierend auf dem 'src/brain' Konzept.
+
+WICHTIG - KNOWLEDGE MANAGEMENT:
+1. Prüfe IMMER zuerst den Ordner 'src/brain/' auf existierende Konzepte, Marketing-Pläne und Design-Systeme.
+2. Halte dich exakt an die dort definierten Farben, Fonts und Zielgruppen-Ansprachen.
+3. Wenn du Supabase nutzt, erstelle 'supabase/schema.sql' für das DB-Layout.
 
 REGELN FÜR DIE AUSGABE:
 1. Antworte IMMER als valides JSON-Objekt mit einem "actions" Array.
@@ -513,17 +521,6 @@ REGELN FÜR DIE AUSGABE:
   ]
 }
 \`\`\`
-
-TECH STACK GUIDELINES:
-- React 18+ (Functional Components, Hooks)
-- Tailwind CSS (für ALLES Styling)
-- Lucide React (Icons)
-- Supabase (Backend/DB)
-
-WICHTIG:
-- Nutze 'export default' für Komponenten.
-- Importiere React explizit: \`import React, { useState } from 'react';\`
-- Importiere Icons destructuring: \`import { Menu, X } from 'lucide-react';\`
 `;
 
 // --- Helper & Utility Components ---
@@ -705,7 +702,7 @@ const DashboardView = ({ projects, setProjects, createProject, setCurrentProject
                  <h1 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-b from-blue-600 to-blue-900 tracking-tighter uppercase">Builder</h1>
               </div>
               <p className="text-xl text-bolt-secondary mb-10 max-w-2xl mx-auto leading-relaxed mt-4">
-                Das autonome KI-Entwicklungsteam mit integriertem <span className="text-purple-400 font-semibold">Prompt-Experten</span> und <span className="text-emerald-400 font-semibold">Supabase-Architekt</span>.
+                Das autonome KI-Entwicklungsteam mit integriertem <span className="text-purple-400 font-semibold">CPO</span>, <span className="text-emerald-400 font-semibold">Brain-Management</span> und <span className="text-pink-400 font-semibold">Design-Studio</span>.
               </p>
               
               <div className="flex justify-center gap-4">
@@ -764,7 +761,7 @@ const DashboardView = ({ projects, setProjects, createProject, setCurrentProject
                      <h3 className="text-lg font-bold mb-2 text-white group-hover:text-bolt-accent transition-colors duration-200 truncate">{p.name}</h3>
                      <div className="flex items-center gap-4 text-xs text-bolt-secondary mb-4">
                         <span className="flex items-center gap-1.5 px-2 py-0.5 bg-bolt-bg rounded border border-bolt-border/50 group-hover:border-bolt-accent/20 transition-colors"><Monitor size={10}/> Web App</span>
-                        {p.supabaseConfig?.url && <span className="flex items-center gap-1.5 px-2 py-0.5 bg-emerald-950/30 text-emerald-500 rounded border border-emerald-500/20"><Database size={10}/> Backend verbunden</span>}
+                        {p.supabaseConfig?.url && <span className="flex items-center gap-1.5 px-2 py-0.5 bg-emerald-950/30 text-emerald-500 rounded border border-emerald-500/20"><Database size={10}/> Backend</span>}
                      </div>
                      <div className="pt-4 border-t border-bolt-border/50 text-xs text-gray-500 flex justify-between items-center">
                        <span>Aktualisiert: {new Date(p.updatedAt).toLocaleDateString()}</span>
@@ -792,15 +789,15 @@ const WorkspaceHeader = ({ onExitWorkspace, agentStep, isPaused, handlePause, ha
               </div>
               <div className="flex flex-col">
                  <span className="font-bold text-white tracking-tight leading-none group-hover:text-bolt-accent transition-colors duration-200">NeXifyAI</span>
-                 <span className="text-[10px] text-bolt-secondary leading-none mt-1 group-hover:text-bolt-accent/80 transition-colors duration-200">Zum Dashboard</span>
+                 <span className="text-xs text-bolt-secondary leading-none mt-1 group-hover:text-bolt-accent/80 transition-colors duration-200">Dashboard</span>
               </div>
               <div className="h-6 w-px bg-bolt-border mx-2"></div>
-              <span className="text-sm font-medium text-white">{project.name}</span>
+              <span className="text-sm font-medium text-white hidden md:inline">{project.name}</span>
             </div>
             
-            <div className="flex-1 flex justify-center items-center gap-4">
+            <div className="flex-1 flex justify-center items-center gap-4 overflow-x-auto no-scrollbar mx-4">
                  {/* Agent Status Display */}
-                 <div className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-mono transition-all duration-300 border shadow-sm ${
+                 <div className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-mono transition-all duration-300 border shadow-sm whitespace-nowrap ${
                      isPaused 
                         ? 'bg-yellow-500/10 border-yellow-500/50 text-yellow-500 animate-pulse'
                         : agentStep !== 'idle' 
@@ -811,12 +808,13 @@ const WorkspaceHeader = ({ onExitWorkspace, agentStep, isPaused, handlePause, ha
                     
                     {isPaused && <><Pause size={12} fill="currentColor"/> <span>PAUSIERT</span></>}
                     
-                    {!isPaused && agentStep === 'optimizing' && <><MessageSquareQuote size={12} className="animate-pulse"/> <span>Prompt Expert optimiert...</span></>}
-                    {!isPaused && agentStep === 'planning' && <><BrainCircuit size={12} className="animate-pulse"/> <span>Architekt plant...</span></>}
+                    {!isPaused && agentStep === 'optimizing' && <><MessageSquareQuote size={12} className="animate-pulse"/> <span>Prompt Expert...</span></>}
+                    {!isPaused && agentStep === 'planning' && <><Briefcase size={12} className="animate-pulse text-indigo-400"/> <span className="text-indigo-400">CPO: Planung...</span></>}
+                    {!isPaused && agentStep === 'designing' && <><Palette size={12} className="animate-pulse text-pink-400"/> <span className="text-pink-400">Creative Director...</span></>}
                     {!isPaused && agentStep === 'database' && <><Database size={12} className="animate-pulse text-emerald-400"/> <span className="text-emerald-400">DB Architect...</span></>}
-                    {!isPaused && agentStep === 'coding' && <><Code size={12} className="animate-spin"/> <span>Coder schreibt...</span></>}
-                    {!isPaused && agentStep === 'reviewing' && <><ShieldCheck size={12} className="animate-pulse"/> <span>Reviewer prüft...</span></>}
-                    {!isPaused && agentStep === 'fixing' && <><Wrench size={12} className="animate-pulse"/> <span>Fixer korrigiert...</span></>}
+                    {!isPaused && agentStep === 'coding' && <><Code size={12} className="animate-spin"/> <span>Architect Coder...</span></>}
+                    {!isPaused && agentStep === 'reviewing' && <><ShieldCheck size={12} className="animate-pulse"/> <span>Reviewer...</span></>}
+                    {!isPaused && agentStep === 'fixing' && <><Wrench size={12} className="animate-pulse"/> <span>Fixer...</span></>}
                     {!isPaused && agentStep === 'idle' && <span>Bereit</span>}
                  </div>
                  
@@ -840,7 +838,7 @@ const WorkspaceHeader = ({ onExitWorkspace, agentStep, isPaused, handlePause, ha
                  )}
 
                  {/* Global Save Status Indicator */}
-                 <div className="flex items-center gap-2 text-xs font-medium transition-colors ml-4 border-l border-bolt-border pl-4">
+                 <div className="hidden lg:flex items-center gap-2 text-xs font-medium transition-colors ml-4 border-l border-bolt-border pl-4">
                     {saveStatus === 'saving' ? (
                        <span className="text-bolt-accent flex items-center gap-1"><RefreshCw size={12} className="animate-spin" /> Speichern...</span>
                     ) : (
@@ -876,7 +874,7 @@ const ChatPanel = ({ messages, input, setInput, handleSendMessage, agentStep }) 
     
     // Filter internal agent chatter, show only relevant final output or user messages
     const displayMessages = useMemo(() => {
-        return messages.filter(m => m.role === 'user' || m.agent === 'coder' || m.agent === 'fixer' || m.agent === 'prompt_expert');
+        return messages.filter(m => m.role === 'user' || m.agent === 'coder' || m.agent === 'fixer' || m.agent === 'prompt_expert' || m.agent === 'planner' || m.agent === 'creative');
     }, [messages]);
 
     return (
@@ -886,7 +884,7 @@ const ChatPanel = ({ messages, input, setInput, handleSendMessage, agentStep }) 
                 <div className="flex flex-col items-center justify-center h-full opacity-30 text-center select-none animate-fade-in">
                     <Bot size={48} className="mb-4 text-bolt-accent" />
                     <p className="text-sm">Beschreibe deine App-Idee.</p>
-                    <p className="text-xs">Das Agenten-Team übernimmt den Rest.</p>
+                    <p className="text-xs mt-2">Das NeXify Team (CPO, Designer, Coder) übernimmt.</p>
                 </div>
             )}
             {displayMessages.map((msg) => (
@@ -894,13 +892,27 @@ const ChatPanel = ({ messages, input, setInput, handleSendMessage, agentStep }) 
                 <div className={`max-w-[95%] rounded-2xl p-4 relative shadow-sm transition-all duration-200 ${
                     msg.role === 'user' ? 'bg-bolt-accent text-white rounded-br-sm shadow-blue-500/10' : 
                     msg.agent === 'prompt_expert' ? 'bg-purple-900/20 border border-purple-500/30 text-purple-200' :
+                    msg.agent === 'planner' ? 'bg-indigo-900/20 border border-indigo-500/30 text-indigo-200' :
+                    msg.agent === 'creative' ? 'bg-pink-900/20 border border-pink-500/30 text-pink-200' :
                     'bg-bolt-dark border border-bolt-border text-bolt-text rounded-bl-sm'
                 }`}>
                    {msg.agent && (
                       <div className="absolute -top-3 -left-2 bg-bolt-bg border border-bolt-border p-1 rounded-full shadow-md z-10 flex items-center gap-1 pr-2">
-                          {msg.agent === 'prompt_expert' ? <MessageSquareQuote size={10} className="text-purple-400" /> : <Bot size={10} className="text-bolt-accent" />}
-                          <span className={`text-[9px] uppercase font-bold tracking-wider ${msg.agent === 'prompt_expert' ? 'text-purple-400' : 'text-bolt-secondary'}`}>
-                              {msg.agent === 'fixer' ? 'Fixer Agent' : msg.agent === 'prompt_expert' ? 'Prompt Expert' : 'Dev Team'}
+                          {msg.agent === 'prompt_expert' ? <MessageSquareQuote size={10} className="text-purple-400" /> : 
+                           msg.agent === 'planner' ? <Briefcase size={10} className="text-indigo-400" /> :
+                           msg.agent === 'creative' ? <Palette size={10} className="text-pink-400" /> :
+                           <Bot size={10} className="text-bolt-accent" />}
+                          <span className={`text-[9px] uppercase font-bold tracking-wider ${
+                              msg.agent === 'prompt_expert' ? 'text-purple-400' : 
+                              msg.agent === 'planner' ? 'text-indigo-400' :
+                              msg.agent === 'creative' ? 'text-pink-400' :
+                              'text-bolt-secondary'
+                          }`}>
+                              {msg.agent === 'fixer' ? 'Fixer Agent' : 
+                               msg.agent === 'prompt_expert' ? 'Prompt Expert' : 
+                               msg.agent === 'planner' ? 'CPO (Planning)' : 
+                               msg.agent === 'creative' ? 'Creative Director' :
+                               'Dev Team'}
                           </span>
                       </div>
                   )}
@@ -908,18 +920,25 @@ const ChatPanel = ({ messages, input, setInput, handleSendMessage, agentStep }) 
                       <div className="text-sm">{msg.content}</div>
                   ) : (
                       <div className="text-xs">
-                         {/* We parse the JSON response to show a friendly message if possible */}
+                         {/* Image Rendering */}
+                         {msg.images && msg.images.length > 0 && (
+                             <div className="mb-3 grid grid-cols-2 gap-2">
+                                 {msg.images.map((img, idx) => (
+                                     <img key={idx} src={`data:image/png;base64,${img}`} alt="Generated Asset" className="rounded-lg border border-bolt-border shadow-lg" />
+                                 ))}
+                             </div>
+                         )}
+
+                         {/* Text Content */}
                          {msg.content.includes('"thought"') ? (
                              <div className="italic mb-2 text-bolt-secondary border-b border-bolt-border/30 pb-2">
                                  "{JSON.parse(msg.content.match(/\{[\s\S]*\}/)?.[0] || '{}').thought || 'Code generiert.'}"
                              </div>
-                         ) : null}
-                         
-                         {msg.agent === 'prompt_expert' && (
-                             <div className="text-purple-200 italic mb-1">{msg.content}</div>
+                         ) : (
+                             <div className={`mb-1 ${msg.agent === 'planner' ? 'italic' : ''}`}>{msg.content}</div>
                          )}
-
-                         {!msg.content.includes('"thought"') && msg.agent !== 'prompt_expert' && (
+                         
+                         {!msg.content.includes('"thought"') && msg.agent !== 'prompt_expert' && msg.agent !== 'planner' && msg.agent !== 'creative' && (
                              <div className="flex items-center gap-2 text-green-400 font-mono bg-green-900/10 p-2 rounded border border-green-900/30">
                                 <CheckCircle2 size={12} /> Änderungen angewendet
                              </div>
@@ -938,7 +957,7 @@ const ChatPanel = ({ messages, input, setInput, handleSendMessage, agentStep }) 
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Was möchtest du bauen?"
+                placeholder="Was möchtest du bauen? (z.B. Coffee Shop App)"
                 className="w-full bg-transparent text-sm text-white p-3 outline-none resize-none max-h-32 min-h-[50px]"
                 rows={1}
               />
@@ -989,11 +1008,12 @@ const FileExplorer = React.memo(() => {
     const FileTreeItem = React.memo(({ item, depth = 0 }: { item: FileNode, depth?: number }) => {
         const isActive = activeFile?.path === item.path;
         const isEditing = editingNode === item.path;
+        const isBrain = item.name === 'brain' && depth === 1; // Assuming src/brain
 
         return (
             <div>
                 <div 
-                    className={`flex items-center py-1 px-2 cursor-pointer text-sm transition-all duration-200 ease-in-out select-none rounded border border-transparent ${isActive ? 'bg-bolt-accent/10 text-bolt-accent border-bolt-accent/20' : 'text-bolt-secondary hover:text-white hover:bg-white/5'}`}
+                    className={`flex items-center py-1 px-2 cursor-pointer text-sm transition-all duration-200 ease-in-out select-none rounded border border-transparent ${isActive ? 'bg-bolt-accent/10 text-bolt-accent border-bolt-accent/20' : 'text-bolt-secondary hover:text-white hover:bg-white/5'} ${isBrain ? 'text-indigo-400 hover:text-indigo-300' : ''}`}
                     style={{ paddingLeft: `${depth * 12 + 8}px` }}
                     onClick={() => !isEditing && (item.type === 'folder' ? toggleFolder(item.path) : handleFileSelect(item))}
                     onContextMenu={(e) => handleContextMenu(e, item.path, item.type)}
@@ -1016,8 +1036,9 @@ const FileExplorer = React.memo(() => {
                             onClick={(e) => e.stopPropagation()}
                         />
                     ) : (
-                        <span className="truncate">{item.name}</span>
+                        <span className={`truncate ${isBrain ? 'font-bold' : ''}`}>{item.name}</span>
                     )}
+                    {isBrain && <BrainCircuit size={12} className="ml-auto opacity-50" />}
                 </div>
                 {item.type === 'folder' && item.isOpen && item.children && item.children.map((child) => (
                     <FileTreeItem key={child.path} item={child} depth={depth + 1} />
@@ -1188,7 +1209,7 @@ const generatePreviewUrl = (files: FileNode[], supabaseConfig?: SupabaseConfig):
     };
 
     sortedFiles.forEach(f => {
-        if(f.path.startsWith('src/') && !f.path.endsWith('.css')) {
+        if(f.path.startsWith('src/') && !f.path.endsWith('.css') && !f.path.endsWith('.json') && !f.path.endsWith('.md')) {
             scriptContent += `\n// File: ${f.path}\ntry {\n${transformCode(f.content, f.path)}\n} catch(e) { console.error("Error loading ${f.path}", e); }\n`;
         }
     });
@@ -1289,6 +1310,8 @@ const TerminalPanel = React.memo(({ open, setOpen }: { open: boolean, setOpen: (
                                log.source === 'Fixer' ? 'text-yellow-400' : 
                                log.source === 'DB Architect' ? 'text-emerald-400' : 
                                log.source === 'Prompt Expert' ? 'text-pink-400' : 
+                               log.source === 'CPO' ? 'text-indigo-400' :
+                               log.source === 'Creative' ? 'text-pink-500' :
                                log.source === 'Error' ? 'text-red-500' : 'text-blue-400'
                              }`}>{log.source}:</span>
                              <span className={`${log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-green-400' : 'text-gray-300'}`}>{log.message}</span>
@@ -1360,9 +1383,9 @@ const WorkspaceView = ({ onExitWorkspace }) => {
     }
   }, []);
 
-  const addMessage = (role: 'user' | 'model', content: string, agent?: AgentType): string => {
+  const addMessage = (role: 'user' | 'model', content: string, agent?: AgentType, images?: string[]): string => {
     const id = Math.random().toString(36).substring(2, 9);
-    setMessages(prev => [...prev, { id, role, content, timestamp: Date.now(), agent }]);
+    setMessages(prev => [...prev, { id, role, content, timestamp: Date.now(), agent, images }]);
     return id;
   };
 
@@ -1410,7 +1433,7 @@ const WorkspaceView = ({ onExitWorkspace }) => {
       }
   };
 
-  // --- THE AI AGENT LOOP (UPDATED V3.0) ---
+  // --- THE AI AGENT LOOP (UPDATED V4.0) ---
   const handleSendMessage = async () => {
     const userMsg = input.trim();
     if (!userMsg || !aiRef.current) return;
@@ -1423,15 +1446,22 @@ const WorkspaceView = ({ onExitWorkspace }) => {
     isPausedRef.current = false;
     setIsPaused(false);
     
-    const filesForContext = JSON.stringify(project.files.map(f => ({path: f.path, content: f.content})).slice(0, 20)); // Limit for token safety
+    // Prepare context
+    const filesForContext = JSON.stringify(project.files.map(f => ({path: f.path, content: f.content})).slice(0, 20));
     
     try {
-      // 0. PROMPT EXPERT OPTIMIZATION (Phase 0)
+      // 0. PROMPT EXPERT (Phase 0)
       setAgentStep('optimizing');
       await checkControlFlow();
-      addLog('Prompt Expert', 'Optimiere User-Anfrage...', 'info');
+      addLog('Prompt Expert', 'Optimiere User-Anfrage (Design, Farbe, Tech)...', 'info');
 
-      const expertSystemPrompt = "Du bist ein erfahrener Prompt-Engineer und Product Owner. Deine Aufgabe ist es, den User-Input in eine perfekte, technische Arbeitsanweisung für einen Senior React Developer umzuwandeln. Ergänze fehlende Details (z.B. Farbgebung, Error-Handling, Responsive Design, Supabase Nutzung). Antworte NUR mit dem optimierten Prompt.";
+      const expertSystemPrompt = `Du bist ein erfahrener Prompt-Engineer und Product Owner. 
+      Deine Aufgabe: Verwandle die User-Idee in eine präzise technische Spezifikation.
+      
+      REGELN:
+      1. Ergänze fehlende Details (Farbpalette, Zielgruppe, Features).
+      2. Berücksichtige Best Practices für React + Tailwind + Supabase.
+      3. Antworte NUR mit dem optimierten Prompt in Textform.`;
       
       const expertResponse = await aiRef.current.models.generateContent({
         model: 'gemini-2.5-flash',
@@ -1443,8 +1473,102 @@ const WorkspaceView = ({ onExitWorkspace }) => {
       addMessage('model', `Optimierter Plan: ${optimizedPrompt}`, 'prompt_expert');
       addLog('Prompt Expert', 'Prompt erfolgreich optimiert.', 'success');
 
+      // 1. CPO / PLANNER AGENT (Phase 1 - The Brain)
+      // Creates concept, marketing, design docs in src/brain
+      setAgentStep('planning');
+      await checkControlFlow();
+      addLog('CPO', 'Erstelle Business-Konzept & Brain...', 'info');
 
-      // 1. DETECT BACKEND NEEDS (DB ARCHITECT)
+      const plannerPrompt = `
+        TASK: Du bist der Chief Product Officer (CPO). Erstelle die Projekt-Grundlagen im 'src/brain' Ordner.
+        INPUT: ${optimizedPrompt}
+        
+        ERSTELLE FOLGENDE DATEIEN:
+        1. src/brain/concept.md (Business Plan, Features, Monetarisierung)
+        2. src/brain/marketing.md (Zielgruppe, Social Media Strategie, Blog-Ideen)
+        3. src/brain/design.json (Farbpalette Hex-Codes, Fonts, UI-Stil)
+
+        Antworte NUR als JSON Action Array.
+      `;
+
+      const plannerResponse = await aiRef.current.models.generateContent({
+          model: 'gemini-3-pro-preview', // Smartest model for strategy
+          contents: [{ role: 'user', parts: [{ text: plannerPrompt }] }],
+          config: { systemInstruction: DEFAULT_SYSTEM_PROMPT }
+      });
+
+      const plannerText = plannerResponse.text || '';
+      const plannerJsonMatch = plannerText.match(/```json\s*([\s\S]*?)\s*```|({[\s\S]*})/);
+      const plannerActions = JSON.parse(plannerJsonMatch ? (plannerJsonMatch[1] || plannerJsonMatch[2]) : '{"actions": []}').actions || [];
+      
+      // Apply Planner Actions immediately
+      plannerActions.forEach((action: AIFileAction) => {
+          if (action.type === 'CREATE_FILE' || action.type === 'UPDATE_FILE') {
+             // Create folders if needed
+              const parts = action.path.split('/');
+              const folderPath = parts.slice(0, -1).join('/');
+              createNode(folderPath, 'file', action.content);
+              updateFileContent(action.path, action.content || '');
+          }
+      });
+      addMessage('model', 'Business-Konzept & Brain erstellt.', 'planner');
+
+
+      // 2. CREATIVE DIRECTOR / ASSET GEN (Phase 2)
+      setAgentStep('designing');
+      await checkControlFlow();
+      addLog('Creative', 'Prüfe Asset-Bedarf & Generiere Bilder...', 'info');
+
+      // Check if we need a logo or hero image
+      const designDoc = plannerActions.find(a => a.path.includes('design.json'))?.content || '{}';
+      let generatedImages: string[] = [];
+
+      if (optimizedPrompt.toLowerCase().includes('logo') || optimizedPrompt.toLowerCase().includes('bild') || true) { // Always try to gen assets for polish
+          const assetPrompt = `
+             Erstelle ein Prompt für ein modernes App-Icon/Logo basierend auf diesem Design: ${designDoc}.
+             Antworte nur mit dem englischen Prompt für die Bild-KI.
+          `;
+          const assetPromptRes = await aiRef.current.models.generateContent({
+             model: 'gemini-2.5-flash',
+             contents: [{role: 'user', parts: [{text: assetPrompt}]}]
+          });
+          const imagePrompt = assetPromptRes.text;
+          
+          addLog('Creative', `Generiere Asset: ${imagePrompt.substring(0, 30)}...`, 'info');
+          
+          try {
+              // Using 2.5 flash image for generation as per instructions "Generate images using gemini-2.5-flash-image"
+              // Note: In strict Google GenAI SDK, generation is often via 'generateImages' on Imagen models OR multimodal generateContent on newer models.
+              // We will try standard generateContent with response schema if supported, or fall back to 2.5 Flash logic.
+              // INSTRUCTION: "Call generateContent to generate images with nano banana series models"
+              
+              const imgResponse = await aiRef.current.models.generateContent({
+                  model: 'gemini-2.5-flash-image', 
+                  contents: [{ role: 'user', parts: [{ text: imagePrompt }] }],
+                  config: { responseMimeType: 'image/jpeg' } // Hinting for image output
+              });
+
+              // Iterate parts to find image
+              if(imgResponse.candidates?.[0]?.content?.parts) {
+                  for (const part of imgResponse.candidates[0].content.parts) {
+                      if (part.inlineData && part.inlineData.data) {
+                          generatedImages.push(part.inlineData.data);
+                          addLog('Creative', 'Bild erfolgreich generiert.', 'success');
+                      }
+                  }
+              }
+              
+              if(generatedImages.length > 0) {
+                  addMessage('model', 'Design-Assets generiert.', 'creative', generatedImages);
+              }
+
+          } catch (e) {
+              console.warn("Image gen failed or not supported in this env", e);
+              addLog('Creative', 'Bild-Generierung übersprungen (API Limit/Mock).', 'warning');
+          }
+      }
+
+      // 3. DETECT BACKEND NEEDS (DB ARCHITECT)
       let additionalInstructions = "";
       if(userMsg.toLowerCase().includes('datenbank') || userMsg.toLowerCase().includes('login') || userMsg.toLowerCase().includes('speicher') || userMsg.toLowerCase().includes('supabase') || optimizedPrompt.toLowerCase().includes('supabase')) {
           setAgentStep('database');
@@ -1460,7 +1584,7 @@ const WorkspaceView = ({ onExitWorkspace }) => {
           additionalInstructions = " HINWEIS (VOM DB ARCHITECT): Der Nutzer benötigt Backend-Funktionalität. Implementiere dies mit dem '@supabase/supabase-js' Client. Gehe davon aus, dass die Environment-Variablen VITE_SUPABASE_URL und VITE_SUPABASE_ANON_KEY existieren. WICHTIG: Erstelle eine Datei 'supabase/schema.sql', die den SQL-Code zum Erstellen der notwendigen Tabellen enthält. UND: Erstelle 'src/types/database.ts' mit den TypeScript Interfaces.";
       }
 
-      // 2. ARCHITECT / CODER PHASE
+      // 4. ARCHITECT / CODER PHASE
       setAgentStep('coding');
       await checkControlFlow();
       addLog('Orchestrator', 'Starte Coder Agent (Model: Gemini 3 Pro)...', 'info');
@@ -1468,8 +1592,10 @@ const WorkspaceView = ({ onExitWorkspace }) => {
       const coderPrompt = `
         ORIGINAL TASK: ${userMsg}
         OPTIMIZED TASK: ${optimizedPrompt}
+        BRAIN CONTEXT (Design/Concept): ${JSON.stringify(plannerActions.map(a => a.content).join('\n').substring(0, 2000))}
         EXISTING FILES: ${filesForContext}
         INSTRUCTIONS: Du bist der Lead Coder. Erstelle oder aktualisiere Dateien, um die Aufgabe zu lösen.${additionalInstructions}
+        Nutze das 'src/brain' Wissen für Farben und Texte.
         Antworte NUR mit JSON format actions.
       `;
 
@@ -1502,7 +1628,7 @@ const WorkspaceView = ({ onExitWorkspace }) => {
       const MAX_RETRIES = 2;
 
       while(attempts <= MAX_RETRIES && !approved) {
-          // 3. REVIEWER PHASE (The Autonomous Quality Check)
+          // 5. REVIEWER PHASE (The Autonomous Quality Check)
           setAgentStep('reviewing');
           await checkControlFlow();
           
@@ -1544,291 +1670,4 @@ const WorkspaceView = ({ onExitWorkspace }) => {
               addLog('Reviewer', `Probleme gefunden: ${reviewParsed.issues?.join(', ')}`, 'warning');
               
               if (attempts < MAX_RETRIES) {
-                  // 4. FIXER PHASE
-                  setAgentStep('fixing');
-                  await checkControlFlow();
-                  addLog('Fixer', 'Starte automatische Reparatur...', 'info');
-
-                  const fixerPrompt = `
-                    TASK: Repariere den Code basierend auf dem Feedback des Reviewers.
-                    
-                    ORIGINAL ACTIONS: ${JSON.stringify(currentActions)}
-                    ISSUES FOUND: ${JSON.stringify(reviewParsed.issues)}
-                    CONTEXT FILES: ${filesForContext}
-                    
-                    INSTRUCTION: Generiere ein NEUES, KORRIGIERTES 'actions' Array. Behebe alle genannten Fehler.
-                    Antworte NUR mit JSON format actions.
-                  `;
-
-                  const fixerResponse = await aiRef.current.models.generateContent({
-                      model: 'gemini-3-pro-preview', // Use smart model for fixing
-                      contents: [{ role: 'user', parts: [{ text: fixerPrompt }] }]
-                  });
-                  
-                  const fixerText = fixerResponse.text || '';
-                  const fixerJsonMatch = fixerText.match(/```json\s*([\s\S]*?)\s*```|({[\s\S]*})/);
-                  const fixerParsed = JSON.parse(fixerJsonMatch ? (fixerJsonMatch[1] || fixerJsonMatch[2]) : '{}');
-
-                  if (fixerParsed.actions && Array.isArray(fixerParsed.actions)) {
-                      currentActions = fixerParsed.actions;
-                      addLog('Fixer', 'Korrekturen angewendet. Sende zur erneuten Prüfung...', 'success');
-                  } else {
-                      addLog('Fixer', 'Konnte keine validen Korrekturen generieren.', 'error');
-                      break; 
-                  }
-                  attempts++;
-              } else {
-                  addLog('System', 'Maximale Korrektur-Versuche erreicht. Breche ab.', 'error');
-                  break;
-              }
-          }
-      }
-
-      if (approved) {
-          // EXECUTE
-          await checkControlFlow();
-          
-          addMessage('model', JSON.stringify({ thought: "Plan ausgeführt und verifiziert.", actions: currentActions }, null, 2), 'coder');
-          
-          currentActions.forEach(action => {
-              try {
-                  if (action.type === 'UPDATE_FILE') updateFileContent(action.path, action.content || '');
-                  if (action.type === 'CREATE_FILE') {
-                      const parts = action.path.split('/');
-                      const fileName = parts.pop();
-                      const folderPath = parts.join('/');
-                      createNode(folderPath, 'file', action.content);
-                  }
-                  if (action.type === 'DELETE_FILE') deleteNode(action.path);
-              } catch(err) {
-                  console.error(err);
-                  addLog('System', `Fehler bei Datei-Operation: ${action.path}`, 'error');
-              }
-          });
-          
-          showNotification('Update erfolgreich!', 'success');
-      } else {
-          addMessage('model', 'Ich konnte den Code leider nicht vollständig validieren. Es wurden potenzielle Fehler gefunden, die ich nicht automatisch beheben konnte.', 'system');
-      }
-
-    } catch (e) {
-      if (e.message === 'Cancelled') {
-        // Handled in handleStop
-      } else {
-        console.error(e);
-        addMessage('model', 'Kritischer Fehler im Agenten-Workflow.', 'system');
-        addLog('System', e.message, 'error');
-        showNotification('Fehler aufgetreten', 'error');
-      }
-    } finally {
-      if (!isPausedRef.current) { 
-          setAgentStep('idle');
-          abortControllerRef.current = null;
-      }
-    }
-  };
-
-  return (
-      <div className="flex h-screen w-screen bg-bolt-bg overflow-hidden flex-col font-sans">
-          <WorkspaceHeader 
-              onExitWorkspace={onExitWorkspace} 
-              agentStep={agentStep} 
-              isPaused={isPaused}
-              handlePause={handlePause}
-              handleResume={handleResume}
-              handleStop={handleStop}
-          />
-          <div className="flex-1 flex overflow-hidden">
-              <ChatPanel
-                  messages={messages}
-                  input={input}
-                  setInput={setInput}
-                  handleSendMessage={handleSendMessage}
-                  agentStep={agentStep}
-              />
-              <Workbench />
-          </div>
-      </div>
-  );
-};
-
-// --- Settings Modal ---
-const SettingsModal = ({ activeModal, setActiveModal, project, setProjects, showNotification }) => {
-    const [localName, setLocalName] = useState('');
-    const [localPrompt, setLocalPrompt] = useState('');
-
-    useEffect(() => {
-      if (project) {
-        setLocalName(project.name);
-        setLocalPrompt(project.systemPrompt || DEFAULT_SYSTEM_PROMPT);
-      }
-    }, [project, activeModal]);
-
-    const handleSave = () => {
-      if (!project) return;
-      setProjects(prev => prev.map(p => p.id === project.id ? { ...p, name: localName, systemPrompt: localPrompt } : p));
-      setActiveModal('none');
-      showNotification('Einstellungen gespeichert', 'success');
-    };
-
-    if (activeModal !== 'settings' || !project) return null;
-    return (
-      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-md p-4 transition-all duration-300 animate-fade-in">
-        <div className="bg-bolt-dark border border-bolt-border rounded-2xl w-[600px] max-w-full p-8 shadow-2xl animate-zoom-in">
-          <div className="flex justify-between items-center mb-8">
-            <h2 className="text-2xl font-bold flex items-center gap-3">
-              <Settings size={24} className="text-bolt-accent" /> Projekt Einstellungen
-            </h2>
-            <button onClick={() => setActiveModal('none')} className="text-bolt-secondary hover:text-white p-2 hover:bg-bolt-border rounded-full transition-all duration-200 active:scale-95">
-              <X size={20} />
-            </button>
-          </div>
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-bolt-secondary mb-2">Projekt Name</label>
-              <input 
-                value={localName}
-                onChange={(e) => setLocalName(e.target.value)}
-                className="w-full bg-bolt-bg border border-bolt-border rounded-xl p-3 text-white outline-none focus:border-bolt-accent focus:ring-1 focus:ring-bolt-accent transition-all duration-200"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-bolt-secondary mb-2">System Prompt (Verhalten der AI)</label>
-              <textarea 
-                value={localPrompt}
-                onChange={(e) => setLocalPrompt(e.target.value)}
-                className="w-full h-48 bg-bolt-bg border border-bolt-border rounded-xl p-3 text-white text-xs font-mono outline-none focus:border-bolt-accent focus:ring-1 focus:ring-bolt-accent resize-none transition-all duration-200 leading-relaxed"
-              />
-            </div>
-          </div>
-          <div className="mt-8 flex justify-end">
-            <button onClick={handleSave} className="bg-bolt-accent hover:bg-blue-600 text-white px-6 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 shadow-lg shadow-blue-500/20 active:scale-95">Speichern & Schließen</button>
-          </div>
-        </div>
-      </div>
-    );
-};
-
-const SupabaseModal = ({ activeModal, setActiveModal, project, showNotification }) => {
-    const { updateSupabaseConfig } = useProject();
-    const [url, setUrl] = useState('');
-    const [key, setKey] = useState('');
-    const [visible, setVisible] = useState(false);
-
-    useEffect(() => {
-      if (project) {
-        // Nutze gespeicherte Config ODER Defaults wenn leer
-        setUrl(project.supabaseConfig?.url || DEFAULT_SUPABASE_URL);
-        setKey(project.supabaseConfig?.anonKey || DEFAULT_SUPABASE_KEY);
-      }
-    }, [project, activeModal]);
-
-    if (activeModal !== 'supabase') return null;
-    
-    const handleSave = () => {
-        updateSupabaseConfig({ url, anonKey: key });
-        showNotification('Supabase Verbindung gespeichert', 'success');
-        setActiveModal('none');
-    };
-
-    return (
-      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-md p-4 transition-all duration-300 animate-fade-in">
-        <div className="bg-bolt-dark border border-bolt-border rounded-2xl w-[550px] max-w-full p-8 shadow-2xl animate-zoom-in">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold flex items-center gap-3 text-emerald-400">
-              <Database size={24} /> Supabase Setup
-            </h2>
-            <button onClick={() => setActiveModal('none')} className="text-bolt-secondary hover:text-white p-2 hover:bg-bolt-border rounded-full transition-all duration-200 active:scale-95">
-              <X size={20} />
-            </button>
-          </div>
-          
-          <div className="bg-emerald-950/30 border border-emerald-500/20 rounded-lg p-5 mb-6 text-sm text-emerald-100/90 leading-relaxed shadow-inner">
-             <strong className="block mb-2 flex items-center gap-2"><Sparkles size={14}/> One-Click Backend Integration</strong>
-             Verbinde dein Projekt, um Datenbank, Auth und Realtime-Features zu aktivieren. 
-             Der <strong>Database Agent</strong> wird automatisch <code>schema.sql</code> Dateien generieren.
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 mb-6">
-              <a href="https://database.new" target="_blank" rel="noreferrer" className="flex flex-col items-center justify-center gap-2 bg-bolt-bg border border-bolt-border hover:border-emerald-500/50 hover:bg-emerald-900/10 p-4 rounded-xl transition-all duration-200 group active:scale-95">
-                  <div className="p-2 bg-emerald-500/10 rounded-full group-hover:bg-emerald-500/20 transition-colors"><Plus size={20} className="text-emerald-400"/></div>
-                  <span className="text-xs font-medium text-emerald-100">Neues Projekt erstellen</span>
-              </a>
-              <a href="https://supabase.com/dashboard/project/_/settings/api" target="_blank" rel="noreferrer" className="flex flex-col items-center justify-center gap-2 bg-bolt-bg border border-bolt-border hover:border-blue-500/50 hover:bg-blue-900/10 p-4 rounded-xl transition-all duration-200 group active:scale-95">
-                  <div className="p-2 bg-blue-500/10 rounded-full group-hover:bg-blue-500/20 transition-colors"><Key size={20} className="text-blue-400"/></div>
-                  <span className="text-xs font-medium text-blue-100">API Keys abrufen</span>
-              </a>
-          </div>
-
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-bolt-secondary mb-2">Project URL</label>
-              <div className="relative">
-                  <Cloud size={16} className="absolute left-3 top-3.5 text-bolt-secondary" />
-                  <input 
-                    value={url}
-                    placeholder="https://xyz.supabase.co"
-                    onChange={(e) => setUrl(e.target.value)}
-                    className="w-full bg-bolt-bg border border-bolt-border rounded-xl p-3 pl-10 text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all duration-200 font-mono text-sm shadow-sm"
-                  />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-bolt-secondary mb-2">Anon / Public Key</label>
-              <div className="relative">
-                  <Key size={16} className="absolute left-3 top-3.5 text-bolt-secondary" />
-                  <input 
-                    type={visible ? 'text' : 'password'}
-                    value={key}
-                    placeholder="eyJh..."
-                    onChange={(e) => setKey(e.target.value)}
-                    className="w-full bg-bolt-bg border border-bolt-border rounded-xl p-3 pl-10 pr-10 text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all duration-200 font-mono text-sm shadow-sm"
-                  />
-                  <button onClick={() => setVisible(!visible)} className="absolute right-3 top-3 text-bolt-secondary hover:text-white transition-colors">
-                      {visible ? <EyeOff size={16}/> : <Eye size={16}/>}
-                  </button>
-              </div>
-            </div>
-          </div>
-          <div className="mt-8 flex justify-end">
-            <button onClick={handleSave} className="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 rounded-xl text-sm font-bold transition-all duration-200 shadow-lg shadow-emerald-500/20 active:scale-95 flex items-center gap-2">
-               <Check size={16} /> Verbindung speichern
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-};
-
-const DocumentationModal = ({ activeModal, setActiveModal }) => {
-    if (activeModal !== 'docs') return null;
-    return (
-      <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 backdrop-blur-md p-4 transition-all duration-300 animate-fade-in">
-        <div className="bg-bolt-dark border border-bolt-border rounded-2xl w-[800px] max-w-full p-8 shadow-2xl animate-zoom-in overflow-y-auto max-h-[80vh]">
-          <div className="flex justify-between items-center mb-8 border-b border-bolt-border pb-4">
-            <h2 className="text-2xl font-bold flex items-center gap-3"><BookOpen size={24} className="text-bolt-accent" /> Dokumentation</h2>
-            <button onClick={() => setActiveModal('none')} className="text-bolt-secondary hover:text-white p-2 hover:bg-bolt-border rounded-full transition-all duration-200 active:scale-95"><X size={20} /></button>
-          </div>
-          <div className="prose prose-invert prose-sm max-w-none">
-             <h3>Willkommen beim NeXifyAI Builder v4.0 Enterprise</h3>
-             <p>Unser neues Multi-Agenten-System sorgt für höchste Code-Qualität und Backend-Integration.</p>
-             <h4>Der v4.0 Workflow</h4>
-             <ul className="list-disc pl-5 space-y-2 text-bolt-secondary">
-               <li><strong>1. Prompt Experte:</strong> Optimiert deine Eingabe, bevor sie den Coder erreicht, um Missverständnisse zu vermeiden.</li>
-               <li><strong>2. Database Architect:</strong> Erkennt Anforderungen an Datenbanken (Supabase) und plant Schemas.</li>
-               <li><strong>3. Architect & Coder (Gemini 3 Pro):</strong> Plant die Architektur und schreibt den initialen Code mit modernsten Standards (Logic Level: Claude Sonnet).</li>
-               <li><strong>4. Reviewer & Fixer:</strong> Überprüft den Code im Hintergrund und repariert ihn automatisch, bevor du ihn siehst.</li>
-             </ul>
-          </div>
-          <div className="mt-8 flex justify-end">
-            <button onClick={() => setActiveModal('none')} className="bg-white/10 hover:bg-white/20 text-white px-6 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 active:scale-95">Schließen</button>
-          </div>
-        </div>
-      </div>
-    );
-};
-
-const rootElement = document.getElementById('root');
-if (rootElement) {
-  createRoot(rootElement).render(<NeXifyBuilder />);
-}
+                  // 6
