@@ -10,9 +10,12 @@ export default defineConfig(({ mode }) => {
         host: '0.0.0.0',
       },
       plugins: [react()],
+      // WICHTIG: API-Keys werden NICHT über define exponiert!
+      // Sie müssen über das Settings-Modal (localStorage) konfiguriert werden.
+      // Environment-Variablen sind nur für Server-Side Code gedacht.
       define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        // Nur nicht-sensitive Konfiguration hier
+        'process.env.NODE_ENV': JSON.stringify(mode),
       },
       resolve: {
         alias: {

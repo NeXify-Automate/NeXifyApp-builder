@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback, createContext, useContext } from 'react';
 import { createRoot } from 'react-dom/client';
-import { GoogleGenAI } from "@google/genai";
 import { 
   Send, Loader2, PanelLeftClose, PanelLeftOpen, Code, Play, FileCode, Terminal, Settings,
   Menu, X, ChevronRight, ChevronDown, ChevronLeft, Layout, RefreshCw, Box, Monitor, Cloud,
@@ -8,22 +7,30 @@ import {
   Plus, Trash2, FolderOpen, Rocket, ExternalLink, CheckCircle2, AlertCircle, FolderPlus,
   Cpu, Activity, Database, Key, Eye, EyeOff, Edit2, Play as PlayIcon, Download, Upload, 
   FileJson, MessageSquareQuote, Layers, Briefcase, Image as ImageIcon, Lightbulb, Square, Pause,
-  Shield, Globe, MapPin, Lock, Server, FileText
+  Shield, Globe, MapPin, Lock, Server, FileText, CreditCard
 } from 'lucide-react';
+// NeXifyAI Agenten
+import { getPromptExpert } from './src/agents/promptExpert';
+import { getArchitect } from './src/agents/architect';
+import { getQAAgent } from './src/agents/qaAgent';
+import { getDesigner } from './src/agents/designer';
+import { getDocuBot } from './src/agents/docuBot';
+import { getModelRouter } from './src/lib/modelRouter';
+import { SettingsModal } from './src/components/SettingsModal';
+import { AgentStatus } from './src/components/AgentStatus';
+import { InterviewModal, type InterviewAnswers } from './src/components/InterviewModal';
+import { PaymentModal } from './src/components/PaymentModal';
+import { autoSaveProject, saveProject, updateProject } from './src/lib/supabase/projects';
+import { saveConcept, saveDesignSystem, saveDecision, saveBrainEntry, getRelevantContext } from './src/lib/supabase/brain';
+import { supabase } from './src/lib/supabase/client';
+import { runCICDPipeline } from './src/lib/cicd/buildSystem';
+import { getCICDMonitor } from './src/lib/cicd/monitor';
+import { getPerformanceOptimizer } from './src/lib/cicd/performance';
 
 // --- Configuration & Constants ---
 
 const DEFAULT_SUPABASE_URL = "https://twjssiysjhnxjqilmwlq.supabase.co";
 const DEFAULT_SUPABASE_KEY = "sb_publishable_YcXRDy6Zpdcda43SzQgj-w_Tz0P5RI4";
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
-const MODELS = {
-  FAST: 'gemini-2.5-flash', 
-  SMART: 'gemini-3-pro-preview',
-  IMAGE: 'gemini-2.5-flash-image',
-  CREATIVE: 'gemini-2.5-flash'
-};
 
 // --- Types ---
 
@@ -155,7 +162,7 @@ interface ProjectContextType {
   addLog: (source: string, message: string, type?: 'info' | 'success' | 'warning' | 'error' | 'agent') => void;
   setActiveModal: (modal: 'none' | 'settings' | 'docs' | 'supabase') => void;
   showNotification: (msg: string, type: 'success' | 'error' | 'info') => void;
-  activeModal: 'none' | 'settings' | 'docs' | 'supabase';
+  activeModal: 'none' | 'settings' | 'docs' | 'supabase' | 'payment';
   notification: { message: string, type: 'success' | 'error' | 'info' } | null;
 }
 
@@ -254,12 +261,20 @@ export default function App() {
 }` },
       { name: 'index.css', path: 'src/index.css', type: 'file', content: '@tailwind base;\n@tailwind components;\n@tailwind utilities;' },
       { name: 'lib', type: 'folder', isOpen: true, path: 'src/lib', children: [
-        { name: 'supabase.ts', path: 'src/lib/supabase.ts', type: 'file', content: `import { createClient } from '@supabase/supabase-js';
+        { name: 'supabase', type: 'folder', isOpen: true, path: 'src/lib/supabase', children: [
+          { name: 'client.ts', path: 'src/lib/supabase/client.ts', type: 'file', content: `import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '${DEFAULT_SUPABASE_URL}';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '${DEFAULT_SUPABASE_KEY}';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);` }
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true
+  }
+});` }
+        ]}
       ]}
     ]
   },
@@ -297,7 +312,10 @@ const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ children }) 
   const [activeFile, setActiveFile] = useState<FileNode | null>(null);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving'>('saved');
   const [logs, setLogs] = useState<TerminalLog[]>([]);
-  const [activeModal, setActiveModal] = useState<'none' | 'settings' | 'docs' | 'supabase'>('none');
+  const [activeModal, setActiveModal] = useState<'none' | 'settings' | 'docs' | 'supabase' | 'payment'>('none');
+  
+  // Agent-Status für UI
+  const [agentStatus, setAgentStatus] = useState<'idle' | 'working' | 'success' | 'error'>('idle');
   const [notification, setNotification] = useState<{message: string, type: 'success' | 'error' | 'info'} | null>(null);
 
   const addLog = useCallback((source: string, message: string, type: 'info' | 'success' | 'warning' | 'error' | 'agent' = 'info') => {
@@ -310,37 +328,73 @@ const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ children }) 
   }, []);
 
   const updateFileContent = useCallback((path: string, content: string) => {
-    setProject(p => ({...p, files: updateNodeByPath(p.files, path, node => ({...node, content}))}));
+    setProject(p => {
+      const updated = {...p, files: updateNodeByPath(p.files, path, node => ({...node, content})), updatedAt: Date.now()};
+      
+      // Auto-Save in Supabase (wenn User eingeloggt)
+      supabase.auth.getUser().then(({ data: { user } }) => {
+        if (user) {
+          autoSaveProject(p.id !== 'default-project' ? p.id : null, {
+            name: updated.name,
+            files: updated.files,
+            supabaseConfig: updated.supabaseConfig
+          }, user.id);
+        }
+      });
+      
+      return updated;
+    });
     setActiveFile(prev => prev?.path === path ? { ...prev, content } : prev);
   }, []);
 
-  const createNode = useCallback((parentPath: string, type: 'file' | 'folder', content: string = '') => {
-      let newName = type === 'file' ? `new-file-${Date.now()}.tsx` : 'new-folder';
-      let targetPath = parentPath;
-      if (parentPath.includes('.')) { 
-          const parts = parentPath.split('/');
+  const createNode = useCallback((parentPath: string, type: 'file' | 'folder', content: string = '', specificPath?: string) => {
+      let newName: string;
+      let targetPath: string;
+      let newPath: string;
+      
+      if (specificPath) {
+          // Verwende spezifischen Pfad (z.B. für src/brain/concept.md)
+          newPath = specificPath;
+          const parts = specificPath.split('/');
+          newName = parts[parts.length - 1];
           parts.pop();
           targetPath = parts.join('/');
+      } else {
+          // Standard-Verhalten: Erstelle neue Datei/Ordner
+          newName = type === 'file' ? `new-file-${Date.now()}.tsx` : 'new-folder';
+          targetPath = parentPath;
+          if (parentPath.includes('.')) { 
+              const parts = parentPath.split('/');
+              parts.pop();
+              targetPath = parts.join('/');
+          }
+          newPath = targetPath ? `${targetPath}/${newName}` : newName;
       }
-      let newPath = targetPath ? `${targetPath}/${newName}` : newName;
-      const newNode: FileNode = { name: newName, path: newPath, type, children: type === 'folder' ? [] : undefined, content: type === 'file' ? content : undefined };
+      
+      const newNode: FileNode = { 
+          name: newName, 
+          path: newPath, 
+          type, 
+          children: type === 'folder' ? [] : undefined, 
+          content: type === 'file' ? content : undefined 
+      };
       
       setProject(p => {
           const filesWithFolders = ensureFolderExists(p.files, targetPath.split('/').filter(Boolean), '');
           return { ...p, files: addNodeToTarget(filesWithFolders, targetPath, newNode) };
       });
       if(newNode.type === 'file') handleFileSelect(newNode);
-  }, []);
+  }, [handleFileSelect]);
 
   const deleteNode = useCallback((path: string) => {
     setProject(p => ({...p, files: removeNodeRecursive(p.files, path)}));
     handleFileClose({path} as FileNode);
-  }, []);
+  }, [handleFileClose]);
 
   const updateSupabaseConfig = useCallback((config: SupabaseConfig) => {
     setProject(p => ({ ...p, supabaseConfig: config }));
     showNotification("Supabase Verbindung aktualisiert", "success");
-  }, []);
+  }, [showNotification]);
 
   const handleFileSelect = useCallback((file: FileNode) => {
     const fullFile = findNodeByPath(project.files, file.path);
@@ -362,6 +416,59 @@ const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ children }) 
         return newOpenFiles;
     });
   }, [activeFile]);
+
+  // CI/CD 24/7 Monitor initialisieren
+  useEffect(() => {
+    const monitor = getCICDMonitor();
+    const optimizer = getPerformanceOptimizer();
+
+    // Starte Monitor mit Performance-Optimierung
+    const getProjectFiles = (): Record<string, string> => {
+      const files: Record<string, string> = {};
+      const collectFiles = (nodes: FileNode[]) => {
+        for (const node of nodes) {
+          if (node.type === 'file' && node.content) {
+            files[node.path] = node.content;
+          }
+          if (node.children) {
+            collectFiles(node.children);
+          }
+        }
+      };
+      collectFiles(project.files);
+      return files;
+    };
+
+    const handleMonitorStatusChange = (status: any) => {
+      if (status.lastResult && status.lastResult.success) {
+        addLog('CI/CD Monitor', `Build erfolgreich (${status.successfulBuilds}/${status.totalChecks})`, 'success');
+      } else if (status.lastResult && !status.lastResult.success) {
+        addLog('CI/CD Monitor', `${status.lastResult.errors.length} Fehler gefunden`, 'warning');
+      }
+    };
+
+    const handleBuildResult = (result: any) => {
+      if (result.metrics) {
+        addLog('CI/CD', `Qualität: ${result.metrics.codeQuality}, Komplexität: ${result.metrics.complexity}`, 'info');
+      }
+      if (result.optimizations && result.optimizations.length > 0) {
+        addLog('CI/CD', `${result.optimizations.length} Optimierungen gefunden`, 'success');
+      }
+    };
+
+    // Starte Monitor (nur wenn Projekt Dateien hat)
+    if (project.files.length > 0) {
+      monitor.start(
+        getProjectFiles,
+        handleMonitorStatusChange,
+        handleBuildResult
+      );
+    }
+
+    return () => {
+      monitor.stop();
+    };
+  }, [project.files, addLog]);
 
   return (
     <ProjectContext.Provider value={{
@@ -467,133 +574,467 @@ const AgentSystem = () => {
     const [isProcessing, setIsProcessing] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const [currentAgent, setCurrentAgent] = useState<AgentType | null>(null);
+    const [agentStatus, setAgentStatus] = useState<'idle' | 'working' | 'success' | 'error'>('idle');
+    const [showInterview, setShowInterview] = useState(false);
+    const [interviewAnswers, setInterviewAnswers] = useState<InterviewAnswers | null>(null);
 
     useEffect(() => {
         if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }, [messages]);
 
-    const callAgent = async (model: string, prompt: string, sysInstruct: string): Promise<string> => {
-        try {
-            const response = await ai.models.generateContent({
-                model: model,
-                contents: prompt,
-                config: {
-                    systemInstruction: sysInstruct,
-                    temperature: 0.7
-                }
-            });
-            return response.text || "";
-        } catch (e) {
-            console.error("Agent Error:", e);
-            throw e;
-        }
+    // Alte callAgent-Funktion entfernt - wird jetzt über ModelRouter verwendet
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!input.trim() || isProcessing) return;
+        setShowInterview(true);
     };
 
-    const orchestrate = async (userInput: string) => {
+    const handleInterviewComplete = async (answers: InterviewAnswers) => {
+        setInterviewAnswers(answers);
+        setShowInterview(false);
+        const userInput = input;
+        setInput('');
+        await orchestrate(userInput, answers);
+    };
+
+    const handleInterviewSkip = () => {
+        setShowInterview(false);
+        const userInput = input;
+        setInput('');
+        orchestrate(userInput, null);
+    };
+
+    const orchestrate = async (userInput: string, interviewData: InterviewAnswers | null = null) => {
         setIsProcessing(true);
+        setAgentStatus('working');
         const userMsg: Message = { id: Date.now().toString(), role: 'user', content: userInput, timestamp: Date.now() };
         setMessages(prev => [...prev, userMsg]);
 
         try {
-            // Step 1: Prompt Expert
+            // Initialisiere Agenten
+            const promptExpert = getPromptExpert();
+            const architect = getArchitect();
+            const designer = getDesigner();
+            const qaAgent = getQAAgent();
+            const docuBot = getDocuBot();
+            const modelRouter = getModelRouter();
+
+            // Step 1: Prompt Expert - Analysiere und optimiere User-Input
             setCurrentAgent('prompt_expert');
             addLog('Prompt Expert', 'Analysiere User-Intent und optimiere Eingabe...', 'agent');
-            const expertPrompt = `Optimiere diesen User-Prompt für einen Senior Architect. 
-            Vorgaben:
-            1. Erkenne das Ziel (App-Idee).
-            2. Ergänze fehlende technische Details (Supabase DB, React Components, Lucide Icons).
-            3. Stelle sicher, dass das Design "High-End Dark Mode (Venlo Style)" ist.
-            4. Füge hinzu, dass ein Konzept in src/brain/concept.md erstellt werden MUSS.
             
-            User Prompt: "${userInput}"`;
+            const fileStructure = project.files.map(f => f.path);
             
-            const optimizedPrompt = await callAgent(MODELS.FAST, expertPrompt, "Du bist der NeXify Prompt Experte. Antworte NUR mit dem optimierten Prompt.");
-            addLog('Prompt Expert', 'Prompt optimiert und an das Board übergeben.', 'success');
+            // RAG: Hole relevantes Wissen aus dem Brain
+            let brainContext = '';
+            if (project.id !== 'default-project') {
+                try {
+                    brainContext = await getRelevantContext(project.id, userInput, 3);
+                    if (brainContext && !brainContext.includes('Kein relevantes Wissen')) {
+                        addLog('RAG', 'Relevantes Wissen aus Brain geladen', 'success');
+                    }
+                } catch (error) {
+                    console.warn('Fehler beim Laden des Brain-Contexts:', error);
+                }
+            }
+            
+            // Integriere Interview-Daten in den Prompt
+            let enhancedInput = userInput;
+            if (brainContext) {
+                enhancedInput += `\n\nRelevantes Projekt-Wissen:\n${brainContext}`;
+            }
+            if (interviewData) {
+                if (interviewData.designStyle) enhancedInput += `\nDesign-Stil: ${interviewData.designStyle}`;
+                if (interviewData.targetAudience) enhancedInput += `\nZielgruppe: ${interviewData.targetAudience}`;
+                if (interviewData.colorPreferences?.length) enhancedInput += `\nFarb-Präferenzen: ${interviewData.colorPreferences.join(', ')}`;
+                if (interviewData.referenceUrl) enhancedInput += `\nReferenz-URL: ${interviewData.referenceUrl}`;
+                if (interviewData.features?.length) enhancedInput += `\nWichtige Features: ${interviewData.features.join(', ')}`;
+            }
+            
+            const analysis = await promptExpert.optimizePrompt(enhancedInput, {
+                existingFiles: fileStructure,
+                designSystem: null,
+                referenceUrl: interviewData?.referenceUrl
+            });
+            
+            addLog('Prompt Expert', `Intent erkannt: ${analysis.intent}`, 'success');
+            if (analysis.missingDetails.length > 0) {
+                addLog('Prompt Expert', `Fehlende Details: ${analysis.missingDetails.join(', ')}`, 'warning');
+            }
 
-            // Step 2: CPO (Planner) - Concept
-            setCurrentAgent('planner');
-            addLog('CPO', 'Erstelle Business-Konzept & Projekt-Brain...', 'agent');
-            const conceptPrompt = `Erstelle ein detailliertes Konzept basierend auf: ${optimizedPrompt}.
-            Format: Markdown.
-            Inhalt: Business Summary, Target Audience, Features List, Color Palette Strategy (Venlo Dark Theme).
-            Output NUR den Inhalt der Markdown Datei.`;
-            const conceptMd = await callAgent(MODELS.SMART, conceptPrompt, "Du bist der Chief Product Officer.");
-            createNode('src/brain', 'file', ''); // Ensure folder exists
-            updateFileContent('src/brain/concept.md', conceptMd);
-            addLog('CPO', 'Konzept in src/brain/concept.md abgelegt.', 'success');
+            // Step 2: Architect - Erstelle Business-Konzept
+            setCurrentAgent('architect');
+            addLog('Architect', 'Erstelle vollständiges Business-Konzept...', 'agent');
+            
+            const businessConcept = await architect.createBusinessConcept(analysis.optimizedPrompt);
+            
+            // Speichere Konzept
+            const conceptMarkdown = `# Business-Konzept
 
-            // Step 3: Creative Director (Asset Generation)
-            setCurrentAgent('creative');
-            addLog('Creative Dir', 'Generiere Design-Assets und Bild-Prompts...', 'agent');
-            // Mocking Image Gen for Stability in this environemnt, but logic stands
-            const designJson = JSON.stringify({
-                theme: "NeXify Dark Premium",
-                primary: "#0EA5E9",
-                background: "#020408",
-                font: "Inter",
-                assets: ["logo_placeholder.png", "hero_bg.png"]
-            }, null, 2);
-            updateFileContent('src/brain/design.json', designJson);
+## Summary
+${businessConcept.summary}
 
-            // Step 4: Architect (Coder)
+## Zielgruppe
+${businessConcept.targetAudience}
+
+## Features
+${businessConcept.features.map(f => `- ${f}`).join('\n')}
+
+## Tech Stack
+${businessConcept.techStack.map(t => `- ${t}`).join('\n')}
+
+${businessConcept.dbSchema ? `## Database Schema\n\`\`\`sql\n${businessConcept.dbSchema}\n\`\`\`` : ''}
+
+${businessConcept.marketingStrategy ? `## Marketing-Strategie\n${businessConcept.marketingStrategy}` : ''}
+`;
+            
+            // Stelle sicher, dass src/brain Ordner existiert
+            createNode('src', 'folder', '', 'src/brain');
+            // Erstelle concept.md Datei
+            createNode('src/brain', 'file', conceptMarkdown, 'src/brain/concept.md');
+            
+            // Speichere im Brain (RAG-System)
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user && project.id !== 'default-project') {
+                await saveConcept(project.id, conceptMarkdown);
+            }
+            
+            addLog('Architect', 'Business-Konzept erstellt und gespeichert.', 'success');
+
+            // Step 2.5: Architect - Erstelle Marketing-Strategie
+            setCurrentAgent('architect');
+            addLog('Architect', 'Erstelle Marketing-Strategie...', 'agent');
+            
+            const marketingStrategy = await architect.createMarketingStrategy(businessConcept);
+            const marketingMarkdown = `# Marketing-Strategie\n\n${marketingStrategy}`;
+            
+            // Erstelle marketing.md Datei
+            createNode('src/brain', 'file', marketingMarkdown, 'src/brain/marketing.md');
+            
+            // Speichere Marketing-Strategie im Brain
+            const { data: { user: userMarketing } } = await supabase.auth.getUser();
+            if (userMarketing && project.id !== 'default-project') {
+                await saveBrainEntry(project.id, marketingMarkdown, 'marketing', {
+                    source: 'architect',
+                    timestamp: new Date().toISOString()
+                });
+            }
+            
+            addLog('Architect', 'Marketing-Strategie erstellt und gespeichert.', 'success');
+
+            // Step 3: Designer - Erstelle Design-System
+            setCurrentAgent('designer');
+            addLog('Designer', 'Generiere Design-System und Assets...', 'agent');
+            
+            const designSystem = await designer.createDesignSystem(businessConcept);
+            const designJson = JSON.stringify(designSystem, null, 2);
+            // Erstelle design.json Datei mit spezifischem Pfad
+            createNode('src/brain', 'file', designJson, 'src/brain/design.json');
+            
+            // Speichere Design-System im Brain
+            const { data: { user: user2 } } = await supabase.auth.getUser();
+            if (user2 && project.id !== 'default-project') {
+                await saveDesignSystem(project.id, designSystem);
+            }
+            
+            // Erstelle Tailwind Config
+            const tailwindConfig = designer.createTailwindConfig(designSystem);
+            createNode('', 'file', tailwindConfig, 'tailwind.config.js');
+            
+            addLog('Designer', 'Design-System erstellt.', 'success');
+
+            // Step 4: Architect - Erstelle DB-Schema
+            setCurrentAgent('architect');
+            addLog('Architect', 'Erstelle Datenbank-Schema...', 'agent');
+            
+            const dbSchema = await architect.createDatabaseSchema(businessConcept);
+            const schemaMarkdown = `# Database Schema
+
+## Tabellen
+
+${dbSchema.tables.map(table => `
+### ${table.name}
+${table.description}
+
+**Spalten:**
+${table.columns.map(col => `- \`${col.name}\` (${col.type}): ${col.description}${col.constraints ? ` [${col.constraints.join(', ')}]` : ''}`).join('\n')}
+
+${table.relationships ? `**Beziehungen:**\n${table.relationships.map(rel => `- ${rel.type} → ${rel.table}`).join('\n')}` : ''}
+`).join('\n')}
+
+## Migrations
+
+\`\`\`sql
+${dbSchema.migrations?.join('\n\n') || '-- Keine Migrationen definiert'}
+\`\`\`
+`;
+            
+            // Erstelle database.md Datei mit spezifischem Pfad
+            createNode('src/brain', 'file', schemaMarkdown, 'src/brain/database.md');
+            addLog('Architect', 'Datenbank-Schema erstellt.', 'success');
+
+            // Step 5: Architect - Generiere Code
             setCurrentAgent('coder');
-            addLog('Architect', 'Generiere React-Struktur und Supabase-Integration...', 'agent');
-            
-            // Getting existing file structure for context
-            const fileStructure = project.files.map(f => f.path).join('\n');
+            addLog('Architect', 'Generiere React-Komponenten und Code...', 'agent');
             
             const codingPrompt = `
-            Task: Implementiere das Projekt basierend auf dem Konzept.
-            Stack: React 18, TailwindCSS, Lucide Icons, Supabase-JS.
-            Design: Deep Midnight Blue Background, Glassmorphism, Thin Borders, "Venlo/EU" Branding.
-            
-            Existing Files:
-            ${fileStructure}
+Implementiere eine vollständige React-App basierend auf:
 
-            Prompt: ${optimizedPrompt}
+Business-Konzept: ${businessConcept.summary}
+Features: ${businessConcept.features.join(', ')}
+Design-System: ${JSON.stringify(designSystem.colors)}
 
-            IMPORTANT:
-            - Nutze import.meta.env.VITE_SUPABASE_URL für Supabase.
-            - Antworte als JSON Array von Datei-Objekten:
-            [
-              { "path": "src/components/Header.tsx", "content": "..." },
-              { "path": "src/App.tsx", "content": "..." }
-            ]
-            `;
+Technische Anforderungen:
+- React 18 mit TypeScript
+- TailwindCSS (nutze die erstellte tailwind.config.js)
+- Lucide React für Icons
+- Supabase für Backend (nutze import.meta.env.VITE_SUPABASE_URL)
+- Dark Mode Design mit den definierten Farben
 
-            const codeResponse = await callAgent(MODELS.SMART, codingPrompt, "Du bist ein Senior React Architect. Antworte NUR mit validem JSON.");
-            const cleanedJson = cleanJson(codeResponse);
-            
+Vorhandene Dateien:
+${fileStructure.join('\n')}
+
+WICHTIG:
+- Antworte als JSON Array von Datei-Objekten
+- Jede Datei muss vollständig und funktionsfähig sein
+- Nutze das Design-System konsequent
+
+Format:
+[
+  { "path": "src/components/Header.tsx", "content": "..." },
+  { "path": "src/App.tsx", "content": "..." }
+]
+`;
+
+            const config = modelRouter.selectModel('coding', 'high');
+            if (!config) {
+                throw new Error('Kein verfügbares Modell für Code-Generierung');
+            }
+
+            const codeResponse = await modelRouter.callModel(
+                config,
+                codingPrompt,
+                'Du bist ein Senior React Architect. Erstelle vollständigen, produktionsreifen Code. Antworte NUR mit validem JSON.'
+            );
+
+            const cleanedJson = cleanJson(codeResponse.content);
             let filesToCreate: any[] = [];
+            
             try {
                 filesToCreate = JSON.parse(cleanedJson);
             } catch (e) {
-                addLog('Architect', 'JSON Parsing fehlgeschlagen. Starte Fixer...', 'error');
-                // Trigger Fixer (Simplified loop)
-                const fixedJson = await callAgent(MODELS.SMART, `Fix this JSON: ${cleanedJson}`, "Fix JSON syntax only.");
-                filesToCreate = JSON.parse(cleanJson(fixedJson));
+                addLog('Architect', 'JSON Parsing fehlgeschlagen. Starte QA-Fixer...', 'error');
+                // QA Agent repariert den Code
+                const fixedCode = await qaAgent.fixCode(cleanedJson, 'generated-code.json', [{
+                    type: 'error',
+                    severity: 'high',
+                    file: 'generated-code.json',
+                    message: 'JSON Parsing fehlgeschlagen',
+                    suggestion: 'Repariere JSON-Syntax'
+                }]);
+                filesToCreate = JSON.parse(cleanJson(fixedCode));
             }
 
-            // Step 5: Reviewer & Execution
-            setCurrentAgent('reviewer');
-            addLog('Reviewer', `Prüfe ${filesToCreate.length} Dateien auf Qualität und Sicherheit...`, 'agent');
+            // Step 6: QA Agent - Prüfe Code-Qualität
+            setCurrentAgent('qa');
+            addLog('QA Agent', `Prüfe ${filesToCreate.length} Dateien auf Qualität...`, 'agent');
             
+            const reviewedFiles: any[] = [];
             for (const file of filesToCreate) {
-                // Apply Code
-                if(file.path.includes('/')) createNode(file.path, 'file', file.content);
-                else updateFileContent(file.path, file.content);
-                addLog('System', `Datei erstellt: ${file.path}`, 'info');
+                const review = await qaAgent.reviewCode(
+                    file.content,
+                    file.path,
+                    {
+                        projectFiles: fileStructure,
+                        designSystem
+                    }
+                );
+
+                if (!review.passed) {
+                    addLog('QA Agent', `${file.path}: ${review.issues.length} Issues gefunden`, 'warning');
+                    
+                    // Versuche automatische Reparatur
+                    if (review.issues.some(i => i.severity === 'critical' || i.severity === 'high')) {
+                        addLog('QA Agent', `Repariere kritische Issues in ${file.path}...`, 'agent');
+                        file.content = await qaAgent.fixCode(file.content, file.path, review.issues);
+                    }
+                }
+
+                reviewedFiles.push(file);
             }
 
-            addLog('Orchestrator', 'Mission erfolgreich abgeschlossen.', 'success');
-            setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', content: "Das Projekt wurde erfolgreich erstellt. Das 'Brain' ist aktualisiert und der Code implementiert.", timestamp: Date.now(), agent: 'orchestrator' }]);
+            // Step 7: Erstelle Dateien
+            setCurrentAgent('reviewer');
+            addLog('System', 'Erstelle Dateien...', 'agent');
+            
+            const filesForDocu: Array<{ path: string; purpose: string }> = [];
+            const projectFilesMap: Record<string, string> = {};
+            
+            // Sammle alle Dateien für CI/CD (inkl. Brain-Dateien und Config)
+            // Lade bestehende Dateien aus dem Projekt
+            const collectAllFiles = (nodes: FileNode[]): void => {
+                for (const node of nodes) {
+                    if (node.type === 'file' && node.content) {
+                        projectFilesMap[node.path] = node.content;
+                    }
+                    if (node.children) {
+                        collectAllFiles(node.children);
+                    }
+                }
+            };
+            collectAllFiles(project.files);
+            
+            // Füge Brain-Dateien hinzu (die bereits erstellt wurden)
+            // Diese werden aus dem aktuellen Projekt-Status geladen
+            const brainFiles = ['src/brain/concept.md', 'src/brain/marketing.md', 'src/brain/design.json', 'src/brain/database.md'];
+            for (const brainPath of brainFiles) {
+                const brainFile = findNodeByPath(project.files, brainPath);
+                if (brainFile && brainFile.content) {
+                    projectFilesMap[brainPath] = brainFile.content;
+                }
+            }
+            
+            for (const file of reviewedFiles) {
+                if (file.path.includes('/')) {
+                    createNode(file.path, 'file', file.content, file.path);
+                } else {
+                    createNode('', 'file', file.content, file.path);
+                }
+                
+                // Sammle für CI/CD Pipeline
+                projectFilesMap[file.path] = file.content;
+                
+                // Bestimme Purpose der Datei
+                let purpose = 'React-Komponente';
+                if (file.path.includes('.tsx')) purpose = 'React-Komponente';
+                else if (file.path.includes('.ts')) purpose = 'TypeScript-Modul';
+                else if (file.path.includes('.css')) purpose = 'Styling';
+                else if (file.path.includes('.json')) purpose = 'Konfiguration';
+                else if (file.path.includes('.md')) purpose = 'Dokumentation';
+                else if (file.path.includes('.js')) purpose = 'Konfiguration';
+                
+                filesForDocu.push({ path: file.path, purpose });
+                addLog('System', `✓ ${file.path}`, 'success');
+            }
+            
+            // Füge auch tailwind.config.js hinzu
+            if (tailwindConfig) {
+                projectFilesMap['tailwind.config.js'] = tailwindConfig;
+            }
+            
+            // Step 8: CI/CD Pipeline - Build & Auto-Fix (KI-optimiert)
+            setCurrentAgent('cicd');
+            addLog('CI/CD', 'Starte KI-optimierte Build-Pipeline...', 'agent');
+            
+            try {
+                const optimizer = getPerformanceOptimizer();
+                
+                // Prüfe Cache für beschleunigten Build
+                const cachedResult = optimizer.getCachedResult(projectFilesMap);
+                let buildResult;
+                
+                if (cachedResult) {
+                    addLog('CI/CD', 'Cache-Hit: Verwende gecachtes Build-Result', 'info');
+                    buildResult = cachedResult;
+                } else {
+                    // Performance-Optimierung für Speed
+                    const perfConfig = optimizer.optimizeForSpeed();
+                    addLog('CI/CD', 'Führe Build mit Performance-Optimierung durch...', 'agent');
+                    
+                    buildResult = await runCICDPipeline(projectFilesMap, perfConfig.maxRetries);
+                    
+                    // Cache Result
+                    optimizer.cacheResult(projectFilesMap, buildResult);
+                }
+                
+                // Zeige Metriken
+                if (buildResult.metrics) {
+                    addLog('CI/CD', `📊 Metriken: ${buildResult.metrics.totalFiles} Dateien, ${buildResult.metrics.totalLines} Zeilen`, 'info');
+                    addLog('CI/CD', `📈 Qualität: ${buildResult.metrics.codeQuality}, Komplexität: ${buildResult.metrics.complexity}`, 'info');
+                    if (buildResult.metrics.securityIssues > 0) {
+                        addLog('CI/CD', `⚠️ ${buildResult.metrics.securityIssues} Sicherheitsprobleme gefunden`, 'warning');
+                    }
+                }
+                
+                // Zeige Optimierungen
+                if (buildResult.optimizations && buildResult.optimizations.length > 0) {
+                    addLog('CI/CD', `✨ ${buildResult.optimizations.length} Optimierungen gefunden:`, 'success');
+                    buildResult.optimizations.slice(0, 5).forEach(opt => {
+                        addLog('CI/CD', `  • ${opt}`, 'info');
+                    });
+                }
+                
+                // Wenn Dateien repariert wurden, schreibe sie zurück
+                if (buildResult.fixedFiles && buildResult.fixed) {
+                    addLog('CI/CD', '🤖 Wende KI-reparierte Dateien an...', 'agent');
+                    for (const [filePath, fixedContent] of Object.entries(buildResult.fixedFiles)) {
+                        // Prüfe ob Datei bereits existiert
+                        const existingFile = findNodeByPath(project.files, filePath);
+                        if (existingFile) {
+                            updateFileContent(filePath, fixedContent);
+                        } else {
+                            // Erstelle neue Datei
+                            if (filePath.includes('/')) {
+                                createNode(filePath, 'file', fixedContent, filePath);
+                            } else {
+                                createNode('', 'file', fixedContent, filePath);
+                            }
+                        }
+                        addLog('CI/CD', `✓ ${filePath} repariert`, 'success');
+                    }
+                }
+                
+                if (buildResult.success) {
+                    addLog('CI/CD', '✅ Build erfolgreich!', 'success');
+                    if (buildResult.fixed) {
+                        addLog('CI/CD', '🔧 Fehler automatisch behoben und angewendet', 'success');
+                    }
+                } else {
+                    addLog('CI/CD', `❌ ${buildResult.errors.length} Fehler gefunden`, 'warning');
+                    if (buildResult.errors.length > 0) {
+                        addLog('CI/CD', `Fehler: ${buildResult.errors.slice(0, 3).join(', ')}`, 'error');
+                    }
+                }
+            } catch (error: any) {
+                addLog('CI/CD', `❌ Build-Fehler: ${error.message}`, 'error');
+            }
+            
+            // Dokumentiere Code-Generierung
+            if (project.id !== 'default-project') {
+                const { data: { user } } = await supabase.auth.getUser();
+                if (user) {
+                    await docuBot.documentDecision(project.id, 'orchestrator', 'Code-Generierung abgeschlossen', {
+                        files: filesForDocu,
+                        designSystem,
+                        buildSuccess: true
+                    } as any, user.id);
+                }
+            }
+
+            setAgentStatus('success');
+            addLog('Orchestrator', 'Mission erfolgreich abgeschlossen!', 'success');
+            setMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                role: 'model',
+                content: `✅ Projekt erfolgreich erstellt!\n\n- Business-Konzept: src/brain/concept.md\n- Design-System: src/brain/design.json\n- DB-Schema: src/brain/database.md\n- ${reviewedFiles.length} Dateien generiert und geprüft`,
+                timestamp: Date.now(),
+                agent: 'orchestrator'
+            }]);
 
         } catch (error: any) {
+            setAgentStatus('error');
             addLog('System', `Kritischer Fehler: ${error.message}`, 'error');
-            setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', content: `Fehler: ${error.message}`, timestamp: Date.now() }]);
+            setMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                role: 'model',
+                content: `❌ Fehler: ${error.message}\n\nBitte überprüfe die API-Keys in den Settings oder versuche es erneut.`,
+                timestamp: Date.now()
+            }]);
         } finally {
             setIsProcessing(false);
             setCurrentAgent(null);
+            setTimeout(() => setAgentStatus('idle'), 2000);
         }
     };
 
@@ -648,6 +1089,14 @@ const AgentSystem = () => {
                 )}
             </div>
             <div className="p-4 bg-[#0F1623] border-t border-slate-800">
+                {/* Agent Status */}
+                <div className="mb-3">
+                    <AgentStatus 
+                        activeAgent={currentAgent}
+                        status={agentStatus === 'working' ? 'working' : agentStatus === 'success' ? 'success' : agentStatus === 'error' ? 'error' : 'idle'}
+                    />
+                </div>
+                
                 <div className="relative">
                     <textarea 
                         value={input}
@@ -656,8 +1105,7 @@ const AgentSystem = () => {
                             if(e.key === 'Enter' && !e.shiftKey) {
                                 e.preventDefault();
                                 if(input.trim() && !isProcessing) {
-                                    orchestrate(input);
-                                    setInput('');
+                                    handleSubmit(e);
                                 }
                             }
                         }}
@@ -665,12 +1113,7 @@ const AgentSystem = () => {
                         className="w-full bg-[#020408] border border-slate-700 rounded-xl p-4 pr-12 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 resize-none h-24 text-sm transition-all"
                     />
                     <button 
-                        onClick={() => {
-                            if(input.trim() && !isProcessing) {
-                                orchestrate(input);
-                                setInput('');
-                            }
-                        }}
+                        onClick={handleSubmit}
                         disabled={!input.trim() || isProcessing}
                         className="absolute right-3 bottom-3 p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg disabled:opacity-50 disabled:hover:bg-blue-600 transition-all active:scale-95"
                     >
@@ -949,28 +1392,38 @@ const FileTreeWrapper = () => {
 
 const ActionButtons = () => {
     const { setActiveModal } = useProject();
+    const [showSettings, setShowSettings] = useState(false);
+    
     return (
-        <div className="grid grid-cols-3 gap-2">
-             <button onClick={() => setActiveModal('supabase')} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-emerald-400 transition-all group">
-                <Database size={16} className="group-hover:scale-110 transition-transform" />
-                <span className="text-[9px]">DB Config</span>
-             </button>
-             <button onClick={() => setActiveModal('docs')} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-blue-400 transition-all group">
-                <BookOpen size={16} className="group-hover:scale-110 transition-transform" />
-                <span className="text-[9px]">Brain</span>
-             </button>
-             <button className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-purple-400 transition-all group">
-                <Download size={16} className="group-hover:scale-110 transition-transform" />
-                <span className="text-[9px]">Export</span>
-             </button>
-        </div>
+        <>
+            <div className="grid grid-cols-4 gap-2">
+                 <button onClick={() => setActiveModal('supabase')} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-emerald-400 transition-all group">
+                    <Database size={16} className="group-hover:scale-110 transition-transform" />
+                    <span className="text-[9px]">DB Config</span>
+                 </button>
+                 <button onClick={() => setActiveModal('docs')} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-blue-400 transition-all group">
+                    <BookOpen size={16} className="group-hover:scale-110 transition-transform" />
+                    <span className="text-[9px]">Brain</span>
+                 </button>
+                 <button onClick={() => setShowSettings(true)} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-purple-400 transition-all group">
+                    <Key size={16} className="group-hover:scale-110 transition-transform" />
+                    <span className="text-[9px]">API Keys</span>
+                 </button>
+                 <button onClick={() => setActiveModal('payment')} className="flex flex-col items-center gap-1 p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-blue-400 transition-all group">
+                    <CreditCard size={16} className="group-hover:scale-110 transition-transform" />
+                    <span className="text-[9px]">Abo</span>
+                 </button>
+            </div>
+            {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+        </>
     );
 };
 
 const ModalManager = () => {
-    const { activeModal } = useProject();
+    const { activeModal, setActiveModal } = useProject();
     if (activeModal === 'supabase') return <SupabaseModal />;
     if (activeModal === 'docs') return <DocumentationModal />;
+    if (activeModal === 'payment') return <PaymentModal onClose={() => setActiveModal('none')} />;
     return null;
 };
 
